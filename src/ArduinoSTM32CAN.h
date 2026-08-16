@@ -296,6 +296,7 @@ private:
     bool                _interruptMode;
     Mode                _mode;
     uint8_t             _filterCount;
+    uint8_t             _extFilterCount;
 
     // 引脚配置
     GPIO_TypeDef* _rxPort;   // RX GPIO 端口

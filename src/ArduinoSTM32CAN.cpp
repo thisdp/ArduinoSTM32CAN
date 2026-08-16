@@ -19,6 +19,7 @@ STM32CAN::STM32CAN(FDCAN_GlobalTypeDef* instance)
     , _interruptMode(false)
     , _mode(FD_BRS)
     , _filterCount(0)
+    , _extFilterCount(0)
     , _rxPort(nullptr)
     , _rxPin(0)
     , _rxAF(9)
@@ -143,6 +144,7 @@ bool STM32CAN::begin(const Config& config)
     _mode        = config.mode;
     _started     = true;
     _filterCount = 0;
+    _extFilterCount = 0;
 
     // 注册为静态实例 (用于 HAL 中断回调)
     _instance = this;
@@ -206,8 +208,9 @@ void STM32CAN::end()
         _instance = nullptr;
     }
 
-    _filterCount   = 0;
-    _interruptMode = false;
+    _filterCount    = 0;
+    _extFilterCount = 0;
+    _interruptMode  = false;
 }
 
 // =========================================================================
@@ -321,7 +324,8 @@ bool STM32CAN::setFilter(uint32_t id, uint32_t mask,
 
     FDCAN_FilterTypeDef filter;
     filter.IdType       = extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
-    filter.FilterIndex  = _filterCount;
+    // 标准/扩展滤波器索引分开计数 (HAL 内部按 IdType 加偏移)
+    filter.FilterIndex  = extended ? _extFilterCount : _filterCount;
     filter.FilterType   = FDCAN_FILTER_MASK;
     filter.FilterConfig = (fifo == 0) ? FDCAN_FILTER_TO_RXFIFO0
                                       : FDCAN_FILTER_TO_RXFIFO1;
@@ -332,7 +336,8 @@ bool STM32CAN::setFilter(uint32_t id, uint32_t mask,
         return false;
     }
 
-    _filterCount++;
+    if (extended) _extFilterCount++;
+    else          _filterCount++;
     return true;
 }
 
@@ -343,7 +348,7 @@ bool STM32CAN::setFilterRange(uint32_t id1, uint32_t id2,
 
     FDCAN_FilterTypeDef filter;
     filter.IdType       = extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
-    filter.FilterIndex  = _filterCount;
+    filter.FilterIndex  = extended ? _extFilterCount : _filterCount;
     filter.FilterType   = FDCAN_FILTER_RANGE;
     filter.FilterConfig = (fifo == 0) ? FDCAN_FILTER_TO_RXFIFO0
                                       : FDCAN_FILTER_TO_RXFIFO1;
@@ -354,7 +359,8 @@ bool STM32CAN::setFilterRange(uint32_t id1, uint32_t id2,
         return false;
     }
 
-    _filterCount++;
+    if (extended) _extFilterCount++;
+    else          _filterCount++;
     return true;
 }
 
@@ -370,7 +376,18 @@ void STM32CAN::clearFilters()
         filter.FilterID2    = 0;
         HAL_FDCAN_ConfigFilter(&_handle, &filter);
     }
-    _filterCount = 0;
+    for (uint8_t i = 0; i < _extFilterCount; i++) {
+        FDCAN_FilterTypeDef filter;
+        filter.IdType       = FDCAN_EXTENDED_ID;
+        filter.FilterIndex  = i;
+        filter.FilterType   = FDCAN_FILTER_MASK;
+        filter.FilterConfig = FDCAN_FILTER_DISABLE;
+        filter.FilterID1    = 0;
+        filter.FilterID2    = 0;
+        HAL_FDCAN_ConfigFilter(&_handle, &filter);
+    }
+    _filterCount    = 0;
+    _extFilterCount = 0;
 }
 
 // =========================================================================
@@ -528,8 +545,9 @@ bool STM32CAN::_configFdcan(const Config& cfg)
     _handle.Init.DataTimeSeg1       = cfg.dataTimeSeg1;
     _handle.Init.DataTimeSeg2       = cfg.dataTimeSeg2;
 
-    _handle.Init.StdFiltersNbr = 14;  // 分配标准帧滤波器 RAM (G4 最大 28)
-    _handle.Init.ExtFiltersNbr = 0;
+    _handle.Init.StdFiltersNbr = 20;  // 标准帧滤波器数 (1 字/个)
+    _handle.Init.ExtFiltersNbr = 4;   // 扩展帧滤波器数 (2 字/个)
+                                       // 总 RAM: 20 + 4*2 = 28 ≤ 28 (G4 上限)
 
     return (HAL_FDCAN_Init(&_handle) == HAL_OK);
 }
